@@ -38,6 +38,10 @@ class PromptEncoderConfig(PromptLearningConfig):
         encoder_dropout (`float`): The dropout probability of the prompt encoder.
     """
 
+    virtual_token_id: int = field(
+        default=None,
+        metadata={"help": "The token id of the virtual token used in the prompt"},
+    )
     encoder_reparameterization_type: Union[str, PromptEncoderReparameterizationType] = field(
         default=PromptEncoderReparameterizationType.MLP,
         metadata={"help": "How to reparameterize the prompt encoder"},
