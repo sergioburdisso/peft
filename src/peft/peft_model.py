@@ -1403,8 +1403,9 @@ class PeftModelForSequenceClassification(PeftModel):
                     **kwargs,
                 )
 
+        has_virtual_tokens = peft_config.peft_type == PeftType.P_TUNING and peft_config.virtual_token_id is not None
         batch_size = _get_batch_size(input_ids, inputs_embeds)
-        if attention_mask is not None and peft_config.virtual_token_id is None:
+        if attention_mask is not None and not has_virtual_tokens:
             # concat prompt attention mask
             prefix_attention_mask = torch.ones(batch_size, peft_config.num_virtual_tokens).to(attention_mask.device)
             attention_mask = torch.cat((prefix_attention_mask, attention_mask), dim=1)
@@ -1424,7 +1425,7 @@ class PeftModelForSequenceClassification(PeftModel):
         if peft_config.peft_type == PeftType.PREFIX_TUNING:
             return self._prefix_tuning_forward(input_ids=input_ids, **kwargs)
         else:
-            if kwargs.get("token_type_ids", None) is not None and peft_config.virtual_token_id is None:
+            if kwargs.get("token_type_ids", None) is not None and not has_virtual_tokens:
                 kwargs["token_type_ids"] = torch.cat(
                     (
                         torch.zeros(batch_size, peft_config.num_virtual_tokens).to(self.word_embeddings.weight.device),
@@ -1432,8 +1433,8 @@ class PeftModelForSequenceClassification(PeftModel):
                     ),
                     dim=1,
                 ).long()
-            if peft_config.virtual_token_id is not None:
-                # Check if all examples have the speficied number of virtual tokens
+            if has_virtual_tokens:
+                # Check if all the examples in the batch have the specified number of virtual tokens in them
                 if ((input_ids == peft_config.virtual_token_id).sum(axis=1) != peft_config.num_virtual_tokens).any():
                     raise ValueError("Number of virtual tokens found in the input is different from the specified "
                                      f"(`num_virtual_tokens={peft_config.num_virtual_tokens}`). Either update the input "
@@ -1445,11 +1446,10 @@ class PeftModelForSequenceClassification(PeftModel):
                 inputs_embeds = self.word_embeddings(input_ids)
             prompts = self.get_prompt(batch_size=batch_size, task_ids=task_ids)
             prompts = prompts.to(inputs_embeds.dtype)
-            if peft_config.virtual_token_id is None:
-                inputs_embeds = torch.cat((prompts, inputs_embeds), dim=1)
-            else:
+            if has_virtual_tokens:
                 inputs_embeds[virtual_tokens_ixs] = prompts.reshape(-1, prompts.shape[-1])
-
+            else:
+                inputs_embeds = torch.cat((prompts, inputs_embeds), dim=1)
             return self.base_model(inputs_embeds=inputs_embeds, **kwargs)
 
     def _prefix_tuning_forward(
@@ -1614,8 +1614,9 @@ class PeftModelForCausalLM(PeftModel):
                     **kwargs,
                 )
 
+        has_virtual_tokens = peft_config.peft_type == PeftType.P_TUNING and peft_config.virtual_token_id is not None
         batch_size = _get_batch_size(input_ids, inputs_embeds)
-        if attention_mask is not None and peft_config.virtual_token_id is None:
+        if attention_mask is not None and not has_virtual_tokens:
             # concat prompt attention mask
             prefix_attention_mask = torch.ones(batch_size, peft_config.num_virtual_tokens).to(attention_mask.device)
             attention_mask = torch.cat((prefix_attention_mask, attention_mask), dim=1)
@@ -1641,8 +1642,8 @@ class PeftModelForCausalLM(PeftModel):
             kwargs["past_key_values"] = self.get_prompt(batch_size)
             return self.base_model(input_ids=input_ids, inputs_embeds=inputs_embeds, **kwargs)
         else:
-            if peft_config.virtual_token_id is not None:
-                # Check if all examples have the speficied number of virtual tokens
+            if has_virtual_tokens:
+                # Check if all the examples in the batch have the specified number of virtual tokens in them
                 if ((input_ids == peft_config.virtual_token_id).sum(axis=1) != peft_config.num_virtual_tokens).any():
                     raise ValueError("Number of virtual tokens found in the input is different from the specified "
                                      f"(`num_virtual_tokens={peft_config.num_virtual_tokens}`). Either update the input "
@@ -1653,19 +1654,18 @@ class PeftModelForCausalLM(PeftModel):
             if inputs_embeds is None:
                 inputs_embeds = self.word_embeddings(input_ids)
             if labels is not None:
-                if peft_config.virtual_token_id is None:
+                if has_virtual_tokens:
+                    kwargs["labels"][virtual_tokens_ixs] = -100
+                else:
                     # concat prompt labels
                     prefix_labels = torch.full((batch_size, peft_config.num_virtual_tokens), -100).to(labels.device)
                     kwargs["labels"] = torch.cat((prefix_labels, labels), dim=1)
-                else:
-                    kwargs["labels"][virtual_tokens_ixs] = -100
             prompts = self.get_prompt(batch_size=batch_size, task_ids=task_ids)
             prompts = prompts.to(inputs_embeds.dtype)
-            if peft_config.virtual_token_id is None:
-                inputs_embeds = torch.cat((prompts, inputs_embeds), dim=1)
-            else:
+            if has_virtual_tokens:
                 inputs_embeds[virtual_tokens_ixs] = prompts.reshape(-1, prompts.shape[-1])
-
+            else:
+                inputs_embeds = torch.cat((prompts, inputs_embeds), dim=1)
             return self.base_model(inputs_embeds=inputs_embeds, **kwargs)
 
     def generate(self, *args, **kwargs):
@@ -1848,6 +1848,7 @@ class PeftModelForSeq2SeqLM(PeftModel):
                     **kwargs,
                 )
 
+        has_virtual_tokens = peft_config.peft_type == PeftType.P_TUNING and peft_config.virtual_token_id is not None
         batch_size = _get_batch_size(input_ids, inputs_embeds)
         if decoder_attention_mask is not None:
             # concat prompt attention mask
@@ -1884,8 +1885,8 @@ class PeftModelForSeq2SeqLM(PeftModel):
                 **kwargs,
             )
         elif peft_config.peft_type in [PeftType.PROMPT_TUNING, PeftType.P_TUNING]:
-            if peft_config.virtual_token_id is not None:
-                # Check if all examples have the speficied number of virtual tokens
+            if has_virtual_tokens:
+                # Check if all the examples in the batch have the specified number of virtual tokens in them
                 if ((input_ids == peft_config.virtual_token_id).sum(axis=1) != peft_config.num_virtual_tokens).any():
                     raise ValueError("Number of virtual tokens found in the input is different from the specified "
                                      f"(`num_virtual_tokens={peft_config.num_virtual_tokens}`). Either update the input "
@@ -1896,7 +1897,7 @@ class PeftModelForSeq2SeqLM(PeftModel):
             if inputs_embeds is None:
                 inputs_embeds = self.word_embeddings(input_ids)
 
-            if attention_mask is not None and peft_config.virtual_token_id is None:
+            if attention_mask is not None and not has_virtual_tokens:
                 # concat prompt attention mask
                 prefix_attention_mask = torch.ones(batch_size, peft_config.num_virtual_tokens).to(
                     attention_mask.device
@@ -1905,10 +1906,10 @@ class PeftModelForSeq2SeqLM(PeftModel):
 
             prompts = self.get_prompt(batch_size=batch_size)[:, : peft_config.num_virtual_tokens]
             prompts = prompts.to(inputs_embeds.dtype)
-            if peft_config.virtual_token_id is None:
-                inputs_embeds = torch.cat((prompts, inputs_embeds), dim=1)
-            else:
+            if has_virtual_tokens:
                 inputs_embeds[virtual_tokens_ixs] = prompts.reshape(-1, prompts.shape[-1])
+            else:
+                inputs_embeds = torch.cat((prompts, inputs_embeds), dim=1)
 
             return self.base_model(
                 inputs_embeds=inputs_embeds,
@@ -2163,8 +2164,9 @@ class PeftModelForTokenClassification(PeftModel):
                     **kwargs,
                 )
 
+        has_virtual_tokens = peft_config.peft_type == PeftType.P_TUNING and peft_config.virtual_token_id is not None
         batch_size = _get_batch_size(input_ids, inputs_embeds)
-        if attention_mask is not None and peft_config.virtual_token_id is None:
+        if attention_mask is not None and not has_virtual_tokens:
             # concat prompt attention mask
             prefix_attention_mask = torch.ones(batch_size, peft_config.num_virtual_tokens).to(attention_mask.device)
             attention_mask = torch.cat((prefix_attention_mask, attention_mask), dim=1)
@@ -2184,7 +2186,7 @@ class PeftModelForTokenClassification(PeftModel):
         if peft_config.peft_type == PeftType.PREFIX_TUNING:
             return self._prefix_tuning_forward(input_ids=input_ids, **kwargs)
         else:
-            if kwargs.get("token_type_ids", None) is not None and peft_config.virtual_token_id is None:
+            if kwargs.get("token_type_ids", None) is not None and not has_virtual_tokens:
                 kwargs["token_type_ids"] = torch.cat(
                     (
                         torch.zeros(batch_size, peft_config.num_virtual_tokens).to(self.word_embeddings.weight.device),
@@ -2192,8 +2194,8 @@ class PeftModelForTokenClassification(PeftModel):
                     ),
                     dim=1,
                 ).long()
-            if peft_config.virtual_token_id is not None:
-                # Check if all examples have the speficied number of virtual tokens
+            if has_virtual_tokens:
+                # Check if all the examples in the batch have the specified number of virtual tokens in them
                 if ((input_ids == peft_config.virtual_token_id).sum(axis=1) != peft_config.num_virtual_tokens).any():
                     raise ValueError("Number of virtual tokens found in the input is different from the specified "
                                      f"(`num_virtual_tokens={peft_config.num_virtual_tokens}`). Either update the input "
@@ -2205,11 +2207,10 @@ class PeftModelForTokenClassification(PeftModel):
                 inputs_embeds = self.word_embeddings(input_ids)
             prompts = self.get_prompt(batch_size=batch_size, task_ids=task_ids)
             prompts = prompts.to(inputs_embeds.dtype)
-            if peft_config.virtual_token_id is None:
-                inputs_embeds = torch.cat((prompts, inputs_embeds), dim=1)
-            else:
+            if has_virtual_tokens:
                 inputs_embeds[virtual_tokens_ixs] = prompts.reshape(-1, prompts.shape[-1])
-
+            else:
+                inputs_embeds = torch.cat((prompts, inputs_embeds), dim=1)
             return self.base_model(inputs_embeds=inputs_embeds, **kwargs)
 
     def _prefix_tuning_forward(
@@ -2398,8 +2399,9 @@ class PeftModelForQuestionAnswering(PeftModel):
                     **kwargs,
                 )
 
+        has_virtual_tokens = peft_config.peft_type == PeftType.P_TUNING and peft_config.virtual_token_id is not None
         batch_size = _get_batch_size(input_ids, inputs_embeds)
-        if attention_mask is not None:
+        if attention_mask is not None and not has_virtual_tokens:
             # concat prompt attention mask
             prefix_attention_mask = torch.ones(batch_size, peft_config.num_virtual_tokens).to(attention_mask.device)
             attention_mask = torch.cat((prefix_attention_mask, attention_mask), dim=1)
@@ -2420,7 +2422,7 @@ class PeftModelForQuestionAnswering(PeftModel):
         if peft_config.peft_type == PeftType.PREFIX_TUNING:
             return self._prefix_tuning_forward(input_ids=input_ids, **kwargs)
         else:
-            if kwargs.get("token_type_ids", None) is not None and peft_config.virtual_token_id is None:
+            if kwargs.get("token_type_ids", None) is not None and not has_virtual_tokens:
                 kwargs["token_type_ids"] = torch.cat(
                     (
                         torch.zeros(batch_size, peft_config.num_virtual_tokens).to(self.word_embeddings.weight.device),
@@ -2428,8 +2430,8 @@ class PeftModelForQuestionAnswering(PeftModel):
                     ),
                     dim=1,
                 ).long()
-            if peft_config.virtual_token_id is not None:
-                # Check if all examples have the speficied number of virtual tokens
+            if has_virtual_tokens:
+                # Check if all the examples in the batch have the specified number of virtual tokens in them
                 if ((input_ids == peft_config.virtual_token_id).sum(axis=1) != peft_config.num_virtual_tokens).any():
                     raise ValueError("Number of virtual tokens found in the input is different from the specified "
                                      f"(`num_virtual_tokens={peft_config.num_virtual_tokens}`). Either update the input "
@@ -2441,11 +2443,10 @@ class PeftModelForQuestionAnswering(PeftModel):
                 inputs_embeds = self.word_embeddings(input_ids)
             prompts = self.get_prompt(batch_size=batch_size)
             prompts = prompts.to(inputs_embeds.dtype)
-            if peft_config.virtual_token_id is None:
-                inputs_embeds = torch.cat((prompts, inputs_embeds), dim=1)
-            else:
+            if has_virtual_tokens:
                 inputs_embeds[virtual_tokens_ixs] = prompts.reshape(-1, prompts.shape[-1])
-
+            else:
+                inputs_embeds = torch.cat((prompts, inputs_embeds), dim=1)
             return self.base_model(inputs_embeds=inputs_embeds, **kwargs)
 
     def _prefix_tuning_forward(
@@ -2591,8 +2592,9 @@ class PeftModelForFeatureExtraction(PeftModel):
                     **kwargs,
                 )
 
+        has_virtual_tokens = peft_config.peft_type == PeftType.P_TUNING and peft_config.virtual_token_id is not None
         batch_size = _get_batch_size(input_ids, inputs_embeds)
-        if attention_mask is not None and peft_config.virtual_token_id is None:
+        if attention_mask is not None and not has_virtual_tokens:
             # concat prompt attention mask
             prefix_attention_mask = torch.ones(batch_size, peft_config.num_virtual_tokens).to(attention_mask.device)
             attention_mask = torch.cat((prefix_attention_mask, attention_mask), dim=1)
@@ -2617,8 +2619,8 @@ class PeftModelForFeatureExtraction(PeftModel):
             kwargs["past_key_values"] = self.get_prompt(batch_size)
             return self.base_model(input_ids=input_ids, **kwargs)
         else:
-            if peft_config.virtual_token_id is not None:
-                # Check if all examples have the speficied number of virtual tokens
+            if has_virtual_tokens:
+                # Check if all the examples in the batch have the specified number of virtual tokens in them
                 if ((input_ids == peft_config.virtual_token_id).sum(axis=1) != peft_config.num_virtual_tokens).any():
                     raise ValueError("Number of virtual tokens found in the input is different from the specified "
                                      f"(`num_virtual_tokens={peft_config.num_virtual_tokens}`). Either update the input "
@@ -2630,10 +2632,10 @@ class PeftModelForFeatureExtraction(PeftModel):
                 inputs_embeds = self.word_embeddings(input_ids)
             prompts = self.get_prompt(batch_size=batch_size)
             prompts = prompts.to(inputs_embeds.dtype)
-            if peft_config.virtual_token_id is None:
-                inputs_embeds = torch.cat((prompts, inputs_embeds), dim=1)
-            else:
+            if has_virtual_tokens:
                 inputs_embeds[virtual_tokens_ixs] = prompts.reshape(-1, prompts.shape[-1])
+            else:
+                inputs_embeds = torch.cat((prompts, inputs_embeds), dim=1)
             return self.base_model(inputs_embeds=inputs_embeds, **kwargs)
 
 
