@@ -1435,8 +1435,8 @@ class PeftModelForSequenceClassification(PeftModel):
             if peft_config.virtual_token_id is not None:
                 # Check if all examples have the speficied number of virtual tokens
                 if ((input_ids == peft_config.virtual_token_id).sum(axis=1) != peft_config.num_virtual_tokens).any():
-                    raise ValueError(f"Number of virtual tokens found in the input is different from the specified "
-                                     "(`num_virtual_tokens={peft_config.num_virtual_tokens}`). Either update the input "
+                    raise ValueError("Number of virtual tokens found in the input is different from the specified "
+                                     f"(`num_virtual_tokens={peft_config.num_virtual_tokens}`). Either update the input "
                                      "prompt or provide the correct number of virtual tokens in the input prompt.")
                 virtual_tokens_ixs = (input_ids == peft_config.virtual_token_id).nonzero(as_tuple=True)
                 input_ids[virtual_tokens_ixs] = 0
@@ -1644,8 +1644,8 @@ class PeftModelForCausalLM(PeftModel):
             if peft_config.virtual_token_id is not None:
                 # Check if all examples have the speficied number of virtual tokens
                 if ((input_ids == peft_config.virtual_token_id).sum(axis=1) != peft_config.num_virtual_tokens).any():
-                    raise ValueError(f"Number of virtual tokens found in the input is different from the specified "
-                                     "(`num_virtual_tokens={peft_config.num_virtual_tokens}`). Either update the input "
+                    raise ValueError("Number of virtual tokens found in the input is different from the specified "
+                                     f"(`num_virtual_tokens={peft_config.num_virtual_tokens}`). Either update the input "
                                      "prompt or provide the correct number of virtual tokens in the input prompt.")
                 virtual_tokens_ixs = (input_ids == peft_config.virtual_token_id).nonzero(as_tuple=True)
                 input_ids[virtual_tokens_ixs] = 0
@@ -1887,8 +1887,8 @@ class PeftModelForSeq2SeqLM(PeftModel):
             if peft_config.virtual_token_id is not None:
                 # Check if all examples have the speficied number of virtual tokens
                 if ((input_ids == peft_config.virtual_token_id).sum(axis=1) != peft_config.num_virtual_tokens).any():
-                    raise ValueError(f"Number of virtual tokens found in the input is different from the specified "
-                                     "(`num_virtual_tokens={peft_config.num_virtual_tokens}`). Either update the input "
+                    raise ValueError("Number of virtual tokens found in the input is different from the specified "
+                                     f"(`num_virtual_tokens={peft_config.num_virtual_tokens}`). Either update the input "
                                      "prompt or provide the correct number of virtual tokens in the input prompt.")
                 virtual_tokens_ixs = (input_ids == peft_config.virtual_token_id).nonzero(as_tuple=True)
                 input_ids[virtual_tokens_ixs] = 0
@@ -2195,8 +2195,8 @@ class PeftModelForTokenClassification(PeftModel):
             if peft_config.virtual_token_id is not None:
                 # Check if all examples have the speficied number of virtual tokens
                 if ((input_ids == peft_config.virtual_token_id).sum(axis=1) != peft_config.num_virtual_tokens).any():
-                    raise ValueError(f"Number of virtual tokens found in the input is different from the specified "
-                                     "(`num_virtual_tokens={peft_config.num_virtual_tokens}`). Either update the input "
+                    raise ValueError("Number of virtual tokens found in the input is different from the specified "
+                                     f"(`num_virtual_tokens={peft_config.num_virtual_tokens}`). Either update the input "
                                      "prompt or provide the correct number of virtual tokens in the input prompt.")
                 virtual_tokens_ixs = (input_ids == peft_config.virtual_token_id).nonzero(as_tuple=True)
                 input_ids[virtual_tokens_ixs] = 0
@@ -2420,7 +2420,7 @@ class PeftModelForQuestionAnswering(PeftModel):
         if peft_config.peft_type == PeftType.PREFIX_TUNING:
             return self._prefix_tuning_forward(input_ids=input_ids, **kwargs)
         else:
-            if kwargs.get("token_type_ids", None) is not None:
+            if kwargs.get("token_type_ids", None) is not None and peft_config.virtual_token_id is None:
                 kwargs["token_type_ids"] = torch.cat(
                     (
                         torch.zeros(batch_size, peft_config.num_virtual_tokens).to(self.word_embeddings.weight.device),
@@ -2428,11 +2428,24 @@ class PeftModelForQuestionAnswering(PeftModel):
                     ),
                     dim=1,
                 ).long()
+            if peft_config.virtual_token_id is not None:
+                # Check if all examples have the speficied number of virtual tokens
+                if ((input_ids == peft_config.virtual_token_id).sum(axis=1) != peft_config.num_virtual_tokens).any():
+                    raise ValueError("Number of virtual tokens found in the input is different from the specified "
+                                     f"(`num_virtual_tokens={peft_config.num_virtual_tokens}`). Either update the input "
+                                     "prompt or provide the correct number of virtual tokens in the input prompt.")
+                virtual_tokens_ixs = (input_ids == peft_config.virtual_token_id).nonzero(as_tuple=True)
+                input_ids[virtual_tokens_ixs] = 0
+
             if inputs_embeds is None:
                 inputs_embeds = self.word_embeddings(input_ids)
             prompts = self.get_prompt(batch_size=batch_size)
             prompts = prompts.to(inputs_embeds.dtype)
-            inputs_embeds = torch.cat((prompts, inputs_embeds), dim=1)
+            if peft_config.virtual_token_id is None:
+                inputs_embeds = torch.cat((prompts, inputs_embeds), dim=1)
+            else:
+                inputs_embeds[virtual_tokens_ixs] = prompts.reshape(-1, prompts.shape[-1])
+
             return self.base_model(inputs_embeds=inputs_embeds, **kwargs)
 
     def _prefix_tuning_forward(
