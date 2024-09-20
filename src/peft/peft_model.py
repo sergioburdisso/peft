@@ -2592,7 +2592,7 @@ class PeftModelForFeatureExtraction(PeftModel):
                 )
 
         batch_size = _get_batch_size(input_ids, inputs_embeds)
-        if attention_mask is not None:
+        if attention_mask is not None and peft_config.virtual_token_id is None:
             # concat prompt attention mask
             prefix_attention_mask = torch.ones(batch_size, peft_config.num_virtual_tokens).to(attention_mask.device)
             attention_mask = torch.cat((prefix_attention_mask, attention_mask), dim=1)
@@ -2617,11 +2617,23 @@ class PeftModelForFeatureExtraction(PeftModel):
             kwargs["past_key_values"] = self.get_prompt(batch_size)
             return self.base_model(input_ids=input_ids, **kwargs)
         else:
+            if peft_config.virtual_token_id is not None:
+                # Check if all examples have the speficied number of virtual tokens
+                if ((input_ids == peft_config.virtual_token_id).sum(axis=1) != peft_config.num_virtual_tokens).any():
+                    raise ValueError("Number of virtual tokens found in the input is different from the specified "
+                                     f"(`num_virtual_tokens={peft_config.num_virtual_tokens}`). Either update the input "
+                                     "prompt or provide the correct number of virtual tokens in the input prompt.")
+                virtual_tokens_ixs = (input_ids == peft_config.virtual_token_id).nonzero(as_tuple=True)
+                input_ids[virtual_tokens_ixs] = 0
+
             if inputs_embeds is None:
                 inputs_embeds = self.word_embeddings(input_ids)
             prompts = self.get_prompt(batch_size=batch_size)
             prompts = prompts.to(inputs_embeds.dtype)
-            inputs_embeds = torch.cat((prompts, inputs_embeds), dim=1)
+            if peft_config.virtual_token_id is None:
+                inputs_embeds = torch.cat((prompts, inputs_embeds), dim=1)
+            else:
+                inputs_embeds[virtual_tokens_ixs] = prompts.reshape(-1, prompts.shape[-1])
             return self.base_model(inputs_embeds=inputs_embeds, **kwargs)
 
 
