@@ -105,6 +105,27 @@ PEFT_TYPE_TO_MODEL_MAPPING = {
 }
 
 
+def check_ptuning_input_is_valid(input_ids, inputs_embeds, labels, peft_config):
+    """Check if arguments passed to the forward pass are valid when P-Tuning with virtual tokens is enabled."""
+    # Check input_ids
+    if input_ids is None:
+        raise ValueError("`input_ids` cannot be None when P-Tuning with virtual tokens is enabled")
+    # Check num_virtual_tokens
+    if not peft_config.num_virtual_tokens or peft_config.num_virtual_tokens <= 0:
+        raise ValueError(f"`num_virtual_tokens` expected a positive integer (received {peft_config.num_virtual_tokens} instead)")
+    # Check valid labels shape
+    if labels is not None and labels.shape != input_ids.shape:
+        raise ValueError(f"`labels` shape ({labels.shape}) different from `input_ids` shape ({input_ids.shape})")
+    # Check valid inputs_embeds shape
+    if inputs_embeds is not None and inputs_embeds.shape[:-1] != input_ids.shape:
+        raise ValueError(f"`input_embeds` shape ({inputs_embeds.shape[:-1]}) different from input_ids shape ({input_ids.shape})")
+    # Check if all the examples in the batch do, in fact, have the specified number of virtual tokens
+    if ((input_ids == peft_config.virtual_token_id).sum(axis=1) != peft_config.num_virtual_tokens).any():
+        raise ValueError("Number of virtual tokens found in the input is different from the specified "
+                         f"(`num_virtual_tokens={peft_config.num_virtual_tokens}`). Either update the input "
+                         "prompt or provide the correct `num_virtual_tokens` value.")
+
+
 class PeftModel(PushToHubMixin, torch.nn.Module):
     """
     Base model encompassing various Peft methods.
@@ -1434,11 +1455,7 @@ class PeftModelForSequenceClassification(PeftModel):
                     dim=1,
                 ).long()
             if has_virtual_tokens:
-                # Check if all the examples in the batch have the specified number of virtual tokens in them
-                if ((input_ids == peft_config.virtual_token_id).sum(axis=1) != peft_config.num_virtual_tokens).any():
-                    raise ValueError("Number of virtual tokens found in the input is different from the specified "
-                                     f"(`num_virtual_tokens={peft_config.num_virtual_tokens}`). Either update the input "
-                                     "prompt or provide the correct number of virtual tokens in the input prompt.")
+                check_ptuning_input_is_valid(input_ids, inputs_embeds, labels, peft_config)
                 virtual_tokens_ixs = (input_ids == peft_config.virtual_token_id).nonzero(as_tuple=True)
                 input_ids[virtual_tokens_ixs] = 0
 
@@ -1643,11 +1660,7 @@ class PeftModelForCausalLM(PeftModel):
             return self.base_model(input_ids=input_ids, inputs_embeds=inputs_embeds, **kwargs)
         else:
             if has_virtual_tokens:
-                # Check if all the examples in the batch have the specified number of virtual tokens in them
-                if ((input_ids == peft_config.virtual_token_id).sum(axis=1) != peft_config.num_virtual_tokens).any():
-                    raise ValueError("Number of virtual tokens found in the input is different from the specified "
-                                     f"(`num_virtual_tokens={peft_config.num_virtual_tokens}`). Either update the input "
-                                     "prompt or provide the correct number of virtual tokens in the input prompt.")
+                check_ptuning_input_is_valid(input_ids, inputs_embeds, labels, peft_config)
                 virtual_tokens_ixs = (input_ids == peft_config.virtual_token_id).nonzero(as_tuple=True)
                 input_ids[virtual_tokens_ixs] = 0
 
@@ -1886,11 +1899,7 @@ class PeftModelForSeq2SeqLM(PeftModel):
             )
         elif peft_config.peft_type in [PeftType.PROMPT_TUNING, PeftType.P_TUNING]:
             if has_virtual_tokens:
-                # Check if all the examples in the batch have the specified number of virtual tokens in them
-                if ((input_ids == peft_config.virtual_token_id).sum(axis=1) != peft_config.num_virtual_tokens).any():
-                    raise ValueError("Number of virtual tokens found in the input is different from the specified "
-                                     f"(`num_virtual_tokens={peft_config.num_virtual_tokens}`). Either update the input "
-                                     "prompt or provide the correct number of virtual tokens in the input prompt.")
+                check_ptuning_input_is_valid(input_ids, inputs_embeds, labels, peft_config)
                 virtual_tokens_ixs = (input_ids == peft_config.virtual_token_id).nonzero(as_tuple=True)
                 input_ids[virtual_tokens_ixs] = 0
 
@@ -2195,11 +2204,7 @@ class PeftModelForTokenClassification(PeftModel):
                     dim=1,
                 ).long()
             if has_virtual_tokens:
-                # Check if all the examples in the batch have the specified number of virtual tokens in them
-                if ((input_ids == peft_config.virtual_token_id).sum(axis=1) != peft_config.num_virtual_tokens).any():
-                    raise ValueError("Number of virtual tokens found in the input is different from the specified "
-                                     f"(`num_virtual_tokens={peft_config.num_virtual_tokens}`). Either update the input "
-                                     "prompt or provide the correct number of virtual tokens in the input prompt.")
+                check_ptuning_input_is_valid(input_ids, inputs_embeds, labels, peft_config)
                 virtual_tokens_ixs = (input_ids == peft_config.virtual_token_id).nonzero(as_tuple=True)
                 input_ids[virtual_tokens_ixs] = 0
 
@@ -2431,11 +2436,7 @@ class PeftModelForQuestionAnswering(PeftModel):
                     dim=1,
                 ).long()
             if has_virtual_tokens:
-                # Check if all the examples in the batch have the specified number of virtual tokens in them
-                if ((input_ids == peft_config.virtual_token_id).sum(axis=1) != peft_config.num_virtual_tokens).any():
-                    raise ValueError("Number of virtual tokens found in the input is different from the specified "
-                                     f"(`num_virtual_tokens={peft_config.num_virtual_tokens}`). Either update the input "
-                                     "prompt or provide the correct number of virtual tokens in the input prompt.")
+                check_ptuning_input_is_valid(input_ids, inputs_embeds, None, peft_config)
                 virtual_tokens_ixs = (input_ids == peft_config.virtual_token_id).nonzero(as_tuple=True)
                 input_ids[virtual_tokens_ixs] = 0
 
@@ -2620,11 +2621,7 @@ class PeftModelForFeatureExtraction(PeftModel):
             return self.base_model(input_ids=input_ids, **kwargs)
         else:
             if has_virtual_tokens:
-                # Check if all the examples in the batch have the specified number of virtual tokens in them
-                if ((input_ids == peft_config.virtual_token_id).sum(axis=1) != peft_config.num_virtual_tokens).any():
-                    raise ValueError("Number of virtual tokens found in the input is different from the specified "
-                                     f"(`num_virtual_tokens={peft_config.num_virtual_tokens}`). Either update the input "
-                                     "prompt or provide the correct number of virtual tokens in the input prompt.")
+                check_ptuning_input_is_valid(input_ids, inputs_embeds, None, peft_config)
                 virtual_tokens_ixs = (input_ids == peft_config.virtual_token_id).nonzero(as_tuple=True)
                 input_ids[virtual_tokens_ixs] = 0
 
