@@ -1457,10 +1457,11 @@ class PeftModelForSequenceClassification(PeftModel):
             if has_virtual_tokens:
                 check_ptuning_input_is_valid(input_ids, inputs_embeds, labels, peft_config)
                 virtual_tokens_ixs = (input_ids == peft_config.virtual_token_id).nonzero(as_tuple=True)
-                input_ids[virtual_tokens_ixs] = 0
 
             if inputs_embeds is None:
+                if has_virtual_tokens: input_ids[virtual_tokens_ixs] = 0
                 inputs_embeds = self.word_embeddings(input_ids)
+                if has_virtual_tokens: input_ids[virtual_tokens_ixs] = peft_config.virtual_token_id
             prompts = self.get_prompt(batch_size=batch_size, task_ids=task_ids)
             prompts = prompts.to(inputs_embeds.dtype)
             if has_virtual_tokens:
@@ -1662,10 +1663,11 @@ class PeftModelForCausalLM(PeftModel):
             if has_virtual_tokens:
                 check_ptuning_input_is_valid(input_ids, inputs_embeds, labels, peft_config)
                 virtual_tokens_ixs = (input_ids == peft_config.virtual_token_id).nonzero(as_tuple=True)
-                input_ids[virtual_tokens_ixs] = 0
 
             if inputs_embeds is None:
+                if has_virtual_tokens: input_ids[virtual_tokens_ixs] = 0
                 inputs_embeds = self.word_embeddings(input_ids)
+                if has_virtual_tokens: input_ids[virtual_tokens_ixs] = peft_config.virtual_token_id
             if labels is not None:
                 if has_virtual_tokens:
                     kwargs["labels"][virtual_tokens_ixs] = -100
@@ -1901,10 +1903,11 @@ class PeftModelForSeq2SeqLM(PeftModel):
             if has_virtual_tokens:
                 check_ptuning_input_is_valid(input_ids, inputs_embeds, labels, peft_config)
                 virtual_tokens_ixs = (input_ids == peft_config.virtual_token_id).nonzero(as_tuple=True)
-                input_ids[virtual_tokens_ixs] = 0
 
             if inputs_embeds is None:
+                if has_virtual_tokens: input_ids[virtual_tokens_ixs] = 0
                 inputs_embeds = self.word_embeddings(input_ids)
+                if has_virtual_tokens: input_ids[virtual_tokens_ixs] = peft_config.virtual_token_id
 
             if attention_mask is not None and not has_virtual_tokens:
                 # concat prompt attention mask
@@ -2206,10 +2209,11 @@ class PeftModelForTokenClassification(PeftModel):
             if has_virtual_tokens:
                 check_ptuning_input_is_valid(input_ids, inputs_embeds, labels, peft_config)
                 virtual_tokens_ixs = (input_ids == peft_config.virtual_token_id).nonzero(as_tuple=True)
-                input_ids[virtual_tokens_ixs] = 0
 
             if inputs_embeds is None:
+                if has_virtual_tokens: input_ids[virtual_tokens_ixs] = 0
                 inputs_embeds = self.word_embeddings(input_ids)
+                if has_virtual_tokens: input_ids[virtual_tokens_ixs] = peft_config.virtual_token_id
             prompts = self.get_prompt(batch_size=batch_size, task_ids=task_ids)
             prompts = prompts.to(inputs_embeds.dtype)
             if has_virtual_tokens:
@@ -2438,10 +2442,11 @@ class PeftModelForQuestionAnswering(PeftModel):
             if has_virtual_tokens:
                 check_ptuning_input_is_valid(input_ids, inputs_embeds, None, peft_config)
                 virtual_tokens_ixs = (input_ids == peft_config.virtual_token_id).nonzero(as_tuple=True)
-                input_ids[virtual_tokens_ixs] = 0
 
             if inputs_embeds is None:
+                if has_virtual_tokens: input_ids[virtual_tokens_ixs] = 0
                 inputs_embeds = self.word_embeddings(input_ids)
+                if has_virtual_tokens: input_ids[virtual_tokens_ixs] = peft_config.virtual_token_id
             prompts = self.get_prompt(batch_size=batch_size)
             prompts = prompts.to(inputs_embeds.dtype)
             if has_virtual_tokens:
@@ -2623,10 +2628,11 @@ class PeftModelForFeatureExtraction(PeftModel):
             if has_virtual_tokens:
                 check_ptuning_input_is_valid(input_ids, inputs_embeds, None, peft_config)
                 virtual_tokens_ixs = (input_ids == peft_config.virtual_token_id).nonzero(as_tuple=True)
-                input_ids[virtual_tokens_ixs] = 0
 
             if inputs_embeds is None:
+                if has_virtual_tokens: input_ids[virtual_tokens_ixs] = 0
                 inputs_embeds = self.word_embeddings(input_ids)
+                if has_virtual_tokens: input_ids[virtual_tokens_ixs] = peft_config.virtual_token_id
             prompts = self.get_prompt(batch_size=batch_size)
             prompts = prompts.to(inputs_embeds.dtype)
             if has_virtual_tokens:
