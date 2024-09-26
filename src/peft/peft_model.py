@@ -105,7 +105,7 @@ PEFT_TYPE_TO_MODEL_MAPPING = {
 }
 
 
-def check_ptuning_input_is_valid(input_ids, inputs_embeds, labels, peft_config):
+def check_ptuning_input_is_valid(input_ids, inputs_embeds, peft_config):
     """Check if arguments passed to the forward pass are valid when P-Tuning with virtual tokens is enabled."""
     # Check input_ids
     if input_ids is None:
@@ -113,9 +113,6 @@ def check_ptuning_input_is_valid(input_ids, inputs_embeds, labels, peft_config):
     # Check num_virtual_tokens
     if not peft_config.num_virtual_tokens or peft_config.num_virtual_tokens <= 0:
         raise ValueError(f"`num_virtual_tokens` expected a positive integer (received {peft_config.num_virtual_tokens} instead)")
-    # Check valid labels shape
-    if labels is not None and labels.shape != input_ids.shape:
-        raise ValueError(f"`labels` shape ({labels.shape}) different from `input_ids` shape ({input_ids.shape})")
     # Check valid inputs_embeds shape
     if inputs_embeds is not None and inputs_embeds.shape[:-1] != input_ids.shape:
         raise ValueError(f"`input_embeds` shape ({inputs_embeds.shape[:-1]}) different from input_ids shape ({input_ids.shape})")
@@ -726,7 +723,6 @@ class PeftModel(PushToHubMixin, torch.nn.Module):
         self,
         input_ids: Optional[torch.Tensor] = None,
         inputs_embeds: Optional[torch.Tensor] = None,
-        labels: Optional[torch.Tensor] = None,
         task_ids: Optional[torch.Tensor] = None
     ) -> Optional[torch.Tensor]:
         """
@@ -735,7 +731,7 @@ class PeftModel(PushToHubMixin, torch.nn.Module):
         peft_config = self.active_peft_config
         has_virtual_tokens = peft_config.peft_type == PeftType.P_TUNING and peft_config.virtual_token_id is not None
         if has_virtual_tokens:
-            check_ptuning_input_is_valid(input_ids, inputs_embeds, labels, peft_config)
+            check_ptuning_input_is_valid(input_ids, inputs_embeds, peft_config)
             virtual_tokens_ixs = (input_ids == peft_config.virtual_token_id).nonzero(as_tuple=True)
 
         if inputs_embeds is None:
@@ -1487,7 +1483,6 @@ class PeftModelForSequenceClassification(PeftModel):
             inputs_embeds = self.get_prompt_inputs_embeds(
                 input_ids=input_ids,
                 inputs_embeds=inputs_embeds,
-                labels=labels,
                 task_ids=task_ids
             )
             return self.base_model(inputs_embeds=inputs_embeds, **kwargs)
@@ -1685,11 +1680,13 @@ class PeftModelForCausalLM(PeftModel):
             inputs_embeds = self.get_prompt_inputs_embeds(
                 input_ids=input_ids,
                 inputs_embeds=inputs_embeds,
-                labels=labels,
                 task_ids=task_ids
             )
+            # Check valid labels shape
             if labels is not None:
                 if has_virtual_tokens:
+                    if labels.shape != input_ids.shape:
+                        raise ValueError(f"`labels` shape ({labels.shape}) different from `input_ids` shape ({input_ids.shape})")
                     virtual_tokens_ixs = (input_ids == peft_config.virtual_token_id).nonzero(as_tuple=True)
                     kwargs["labels"][virtual_tokens_ixs] = -100
                 else:
@@ -1925,8 +1922,7 @@ class PeftModelForSeq2SeqLM(PeftModel):
 
             inputs_embeds = self.get_prompt_inputs_embeds(
                 input_ids=input_ids,
-                inputs_embeds=inputs_embeds,
-                labels=labels,
+                inputs_embeds=inputs_embeds
             )
 
             return self.base_model(
@@ -2216,7 +2212,6 @@ class PeftModelForTokenClassification(PeftModel):
             inputs_embeds = self.get_prompt_inputs_embeds(
                 input_ids=input_ids,
                 inputs_embeds=inputs_embeds,
-                labels=labels,
                 task_ids=task_ids
             )
 
