@@ -1738,6 +1738,7 @@ class PeftModelForCausalLM(PeftModel):
         if peft_config.peft_type == PeftType.POLY:
             model_kwargs["task_ids"] = task_ids
         if peft_config.is_prompt_learning:
+            has_virtual_tokens = peft_config.peft_type == PeftType.P_TUNING and peft_config.virtual_token_id is not None
             if uses_cache and (model_kwargs["past_key_values"] is not None):
                 # change in the logic of `prepare_inputs_for_generation` makes the below code necessary
                 # In prompt learning methods, past key values are longer when compared to the `input_ids`.
@@ -1750,7 +1751,7 @@ class PeftModelForCausalLM(PeftModel):
                 if seq_len >= model_kwargs["input_ids"].shape[1]:
                     model_kwargs["input_ids"] = model_kwargs["input_ids"][:, -1:]
 
-            if model_kwargs.get("attention_mask", None) is not None:
+            if model_kwargs.get("attention_mask", None) is not None and not has_virtual_tokens:
                 size = model_kwargs["input_ids"].shape[0], peft_config.num_virtual_tokens
                 prefix_attention_mask = torch.ones(size).to(model_kwargs["input_ids"].device)
                 model_kwargs["attention_mask"] = torch.cat(
@@ -1776,10 +1777,10 @@ class PeftModelForCausalLM(PeftModel):
                 new_past_key_values = self.get_prompt(batch_size=model_kwargs["input_ids"].shape[0])
                 model_kwargs["past_key_values"] = new_past_key_values
             elif requires_prompt_injection:
-                inputs_embeds = self.word_embeddings(model_kwargs["input_ids"])
-                prompts = self.get_prompt(batch_size=model_kwargs["input_ids"].shape[0], task_ids=task_ids)
-                prompts = prompts.to(inputs_embeds.dtype)
-                model_kwargs["inputs_embeds"] = torch.cat((prompts, inputs_embeds), dim=1)
+                model_kwargs["inputs_embeds"] = self.get_prompt_inputs_embeds(
+                    input_ids=model_kwargs["input_ids"],
+                    task_ids=task_ids
+                )
                 model_kwargs["input_ids"] = None
 
         # For transformers>=4.38.0 - for some architectures such as Llama, `cache_position` is
