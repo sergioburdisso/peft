@@ -722,6 +722,36 @@ class PeftModel(PushToHubMixin, torch.nn.Module):
                 prompts = prompts.repeat(batch_size, 1, 1)
             return prompts
 
+    def get_prompt_inputs_embeds(
+        self,
+        input_ids: Optional[torch.Tensor] = None,
+        inputs_embeds: Optional[torch.Tensor] = None,
+        labels: Optional[torch.Tensor] = None,
+        task_ids: Optional[torch.Tensor] = None
+    ) -> Optional[torch.Tensor]:
+        """
+        Returns the input embeddings with the corresponding virtual prompts in it (embeddings). Only applicable when using a prompt learning method.
+        """
+        peft_config = self.active_peft_config
+        has_virtual_tokens = peft_config.peft_type == PeftType.P_TUNING and peft_config.virtual_token_id is not None
+        if has_virtual_tokens:
+            check_ptuning_input_is_valid(input_ids, inputs_embeds, labels, peft_config)
+            virtual_tokens_ixs = (input_ids == peft_config.virtual_token_id).nonzero(as_tuple=True)
+
+        if inputs_embeds is None:
+            if has_virtual_tokens: input_ids[virtual_tokens_ixs] = 0
+            inputs_embeds = self.word_embeddings(input_ids)
+            if has_virtual_tokens: input_ids[virtual_tokens_ixs] = peft_config.virtual_token_id
+        prompts = self.get_prompt(batch_size=_get_batch_size(input_ids, inputs_embeds),
+                                  task_ids=task_ids).to(inputs_embeds.dtype)
+        prompts = prompts[:, : peft_config.num_virtual_tokens]  # Getting rid of decoder prompt embeddings (in case of encoder-decoder)
+        if has_virtual_tokens:
+            inputs_embeds[virtual_tokens_ixs] = prompts.reshape(-1, prompts.shape[-1])
+        else:
+            inputs_embeds = torch.cat((prompts, inputs_embeds), dim=1)
+
+        return inputs_embeds
+
     def get_nb_trainable_parameters(self) -> tuple[int, int]:
         r"""
         Returns the number of trainable parameters and the number of all parameters in the model.
@@ -1454,20 +1484,12 @@ class PeftModelForSequenceClassification(PeftModel):
                     ),
                     dim=1,
                 ).long()
-            if has_virtual_tokens:
-                check_ptuning_input_is_valid(input_ids, inputs_embeds, labels, peft_config)
-                virtual_tokens_ixs = (input_ids == peft_config.virtual_token_id).nonzero(as_tuple=True)
-
-            if inputs_embeds is None:
-                if has_virtual_tokens: input_ids[virtual_tokens_ixs] = 0
-                inputs_embeds = self.word_embeddings(input_ids)
-                if has_virtual_tokens: input_ids[virtual_tokens_ixs] = peft_config.virtual_token_id
-            prompts = self.get_prompt(batch_size=batch_size, task_ids=task_ids)
-            prompts = prompts.to(inputs_embeds.dtype)
-            if has_virtual_tokens:
-                inputs_embeds[virtual_tokens_ixs] = prompts.reshape(-1, prompts.shape[-1])
-            else:
-                inputs_embeds = torch.cat((prompts, inputs_embeds), dim=1)
+            inputs_embeds = self.get_prompt_inputs_embeds(
+                input_ids=input_ids,
+                inputs_embeds=inputs_embeds,
+                labels=labels,
+                task_ids=task_ids
+            )
             return self.base_model(inputs_embeds=inputs_embeds, **kwargs)
 
     def _prefix_tuning_forward(
@@ -1660,27 +1682,21 @@ class PeftModelForCausalLM(PeftModel):
             kwargs["past_key_values"] = self.get_prompt(batch_size)
             return self.base_model(input_ids=input_ids, inputs_embeds=inputs_embeds, **kwargs)
         else:
-            if has_virtual_tokens:
-                check_ptuning_input_is_valid(input_ids, inputs_embeds, labels, peft_config)
-                virtual_tokens_ixs = (input_ids == peft_config.virtual_token_id).nonzero(as_tuple=True)
-
-            if inputs_embeds is None:
-                if has_virtual_tokens: input_ids[virtual_tokens_ixs] = 0
-                inputs_embeds = self.word_embeddings(input_ids)
-                if has_virtual_tokens: input_ids[virtual_tokens_ixs] = peft_config.virtual_token_id
+            inputs_embeds = self.get_prompt_inputs_embeds(
+                input_ids=input_ids,
+                inputs_embeds=inputs_embeds,
+                labels=labels,
+                task_ids=task_ids
+            )
             if labels is not None:
                 if has_virtual_tokens:
+                    virtual_tokens_ixs = (input_ids == peft_config.virtual_token_id).nonzero(as_tuple=True)
                     kwargs["labels"][virtual_tokens_ixs] = -100
                 else:
                     # concat prompt labels
                     prefix_labels = torch.full((batch_size, peft_config.num_virtual_tokens), -100).to(labels.device)
                     kwargs["labels"] = torch.cat((prefix_labels, labels), dim=1)
-            prompts = self.get_prompt(batch_size=batch_size, task_ids=task_ids)
-            prompts = prompts.to(inputs_embeds.dtype)
-            if has_virtual_tokens:
-                inputs_embeds[virtual_tokens_ixs] = prompts.reshape(-1, prompts.shape[-1])
-            else:
-                inputs_embeds = torch.cat((prompts, inputs_embeds), dim=1)
+
             return self.base_model(inputs_embeds=inputs_embeds, **kwargs)
 
     def generate(self, *args, **kwargs):
@@ -1900,15 +1916,6 @@ class PeftModelForSeq2SeqLM(PeftModel):
                 **kwargs,
             )
         elif peft_config.peft_type in [PeftType.PROMPT_TUNING, PeftType.P_TUNING]:
-            if has_virtual_tokens:
-                check_ptuning_input_is_valid(input_ids, inputs_embeds, labels, peft_config)
-                virtual_tokens_ixs = (input_ids == peft_config.virtual_token_id).nonzero(as_tuple=True)
-
-            if inputs_embeds is None:
-                if has_virtual_tokens: input_ids[virtual_tokens_ixs] = 0
-                inputs_embeds = self.word_embeddings(input_ids)
-                if has_virtual_tokens: input_ids[virtual_tokens_ixs] = peft_config.virtual_token_id
-
             if attention_mask is not None and not has_virtual_tokens:
                 # concat prompt attention mask
                 prefix_attention_mask = torch.ones(batch_size, peft_config.num_virtual_tokens).to(
@@ -1916,12 +1923,11 @@ class PeftModelForSeq2SeqLM(PeftModel):
                 )
                 kwargs["attention_mask"] = torch.cat((prefix_attention_mask, attention_mask), dim=1)
 
-            prompts = self.get_prompt(batch_size=batch_size)[:, : peft_config.num_virtual_tokens]
-            prompts = prompts.to(inputs_embeds.dtype)
-            if has_virtual_tokens:
-                inputs_embeds[virtual_tokens_ixs] = prompts.reshape(-1, prompts.shape[-1])
-            else:
-                inputs_embeds = torch.cat((prompts, inputs_embeds), dim=1)
+            inputs_embeds = self.get_prompt_inputs_embeds(
+                input_ids=input_ids,
+                inputs_embeds=inputs_embeds,
+                labels=labels,
+            )
 
             return self.base_model(
                 inputs_embeds=inputs_embeds,
@@ -2206,20 +2212,14 @@ class PeftModelForTokenClassification(PeftModel):
                     ),
                     dim=1,
                 ).long()
-            if has_virtual_tokens:
-                check_ptuning_input_is_valid(input_ids, inputs_embeds, labels, peft_config)
-                virtual_tokens_ixs = (input_ids == peft_config.virtual_token_id).nonzero(as_tuple=True)
 
-            if inputs_embeds is None:
-                if has_virtual_tokens: input_ids[virtual_tokens_ixs] = 0
-                inputs_embeds = self.word_embeddings(input_ids)
-                if has_virtual_tokens: input_ids[virtual_tokens_ixs] = peft_config.virtual_token_id
-            prompts = self.get_prompt(batch_size=batch_size, task_ids=task_ids)
-            prompts = prompts.to(inputs_embeds.dtype)
-            if has_virtual_tokens:
-                inputs_embeds[virtual_tokens_ixs] = prompts.reshape(-1, prompts.shape[-1])
-            else:
-                inputs_embeds = torch.cat((prompts, inputs_embeds), dim=1)
+            inputs_embeds = self.get_prompt_inputs_embeds(
+                input_ids=input_ids,
+                inputs_embeds=inputs_embeds,
+                labels=labels,
+                task_ids=task_ids
+            )
+
             return self.base_model(inputs_embeds=inputs_embeds, **kwargs)
 
     def _prefix_tuning_forward(
@@ -2439,20 +2439,12 @@ class PeftModelForQuestionAnswering(PeftModel):
                     ),
                     dim=1,
                 ).long()
-            if has_virtual_tokens:
-                check_ptuning_input_is_valid(input_ids, inputs_embeds, None, peft_config)
-                virtual_tokens_ixs = (input_ids == peft_config.virtual_token_id).nonzero(as_tuple=True)
 
-            if inputs_embeds is None:
-                if has_virtual_tokens: input_ids[virtual_tokens_ixs] = 0
-                inputs_embeds = self.word_embeddings(input_ids)
-                if has_virtual_tokens: input_ids[virtual_tokens_ixs] = peft_config.virtual_token_id
-            prompts = self.get_prompt(batch_size=batch_size)
-            prompts = prompts.to(inputs_embeds.dtype)
-            if has_virtual_tokens:
-                inputs_embeds[virtual_tokens_ixs] = prompts.reshape(-1, prompts.shape[-1])
-            else:
-                inputs_embeds = torch.cat((prompts, inputs_embeds), dim=1)
+            inputs_embeds = self.get_prompt_inputs_embeds(
+                input_ids=input_ids,
+                inputs_embeds=inputs_embeds
+            )
+
             return self.base_model(inputs_embeds=inputs_embeds, **kwargs)
 
     def _prefix_tuning_forward(
@@ -2625,20 +2617,12 @@ class PeftModelForFeatureExtraction(PeftModel):
             kwargs["past_key_values"] = self.get_prompt(batch_size)
             return self.base_model(input_ids=input_ids, **kwargs)
         else:
-            if has_virtual_tokens:
-                check_ptuning_input_is_valid(input_ids, inputs_embeds, None, peft_config)
-                virtual_tokens_ixs = (input_ids == peft_config.virtual_token_id).nonzero(as_tuple=True)
 
-            if inputs_embeds is None:
-                if has_virtual_tokens: input_ids[virtual_tokens_ixs] = 0
-                inputs_embeds = self.word_embeddings(input_ids)
-                if has_virtual_tokens: input_ids[virtual_tokens_ixs] = peft_config.virtual_token_id
-            prompts = self.get_prompt(batch_size=batch_size)
-            prompts = prompts.to(inputs_embeds.dtype)
-            if has_virtual_tokens:
-                inputs_embeds[virtual_tokens_ixs] = prompts.reshape(-1, prompts.shape[-1])
-            else:
-                inputs_embeds = torch.cat((prompts, inputs_embeds), dim=1)
+            inputs_embeds = self.get_prompt_inputs_embeds(
+                input_ids=input_ids,
+                inputs_embeds=inputs_embeds
+            )
+
             return self.base_model(inputs_embeds=inputs_embeds, **kwargs)
 
 
