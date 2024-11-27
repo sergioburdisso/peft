@@ -78,7 +78,12 @@ class PromptEncoder(torch.nn.Module):
         self.encoder_type = config.encoder_reparameterization_type
 
         # embedding
-        self.embedding = torch.nn.Embedding(self.total_virtual_tokens, self.token_dim)
+        if config.virtual_token_embs is None:
+            self.embedding = torch.nn.Embedding(self.total_virtual_tokens, self.token_dim)
+        else:
+            self.embedding = torch.nn.Embedding.from_pretrained(config.virtual_token_embs, freeze=False)
+            config.virtual_token_embs = None # Tensor is not JSON serializable, setting to None for config to be saved without errors
+
         if not config.inference_mode:
             if self.encoder_type == PromptEncoderReparameterizationType.LSTM:
                 lstm_dropout = config.encoder_dropout

@@ -13,6 +13,8 @@
 # limitations under the License.
 
 import enum
+
+from torch import Tensor
 from dataclasses import dataclass, field
 from typing import Union
 
@@ -42,6 +44,10 @@ class PromptEncoderConfig(PromptLearningConfig):
         default=None,
         metadata={"help": "The token id of the virtual token used in the prompt"},
     )
+    virtual_token_embs: Tensor = field(
+        default=None,
+        metadata={"help": "The token embeddings to use to initialize the embeddings. If provided `num_virtual_tokens` will be ignored."},
+    )
     encoder_reparameterization_type: Union[str, PromptEncoderReparameterizationType] = field(
         default=PromptEncoderReparameterizationType.MLP,
         metadata={"help": "How to reparameterize the prompt encoder"},
@@ -61,3 +67,5 @@ class PromptEncoderConfig(PromptLearningConfig):
 
     def __post_init__(self):
         self.peft_type = PeftType.P_TUNING
+        if self.virtual_token_embs is not None:
+            self.num_virtual_tokens = len(self.virtual_token_embs)
