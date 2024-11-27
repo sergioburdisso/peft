@@ -1651,13 +1651,22 @@ class PeftModelForCausalLM(PeftModel):
 
         has_virtual_tokens = peft_config.peft_type == PeftType.P_TUNING and peft_config.virtual_token_id is not None
         batch_size = _get_batch_size(input_ids, inputs_embeds)
-        if attention_mask is not None and not has_virtual_tokens:
-            # concat prompt attention mask
-            prefix_attention_mask = torch.ones(batch_size, peft_config.num_virtual_tokens).to(attention_mask.device)
-            attention_mask = torch.cat((prefix_attention_mask, attention_mask), dim=1)
-
         if kwargs.get("position_ids", None) is not None:
             warnings.warn("Position ids are not supported for parameter efficient tuning. Ignoring position ids.")
+        if attention_mask is not None:
+            if not has_virtual_tokens:
+                # concat prompt attention mask
+                prefix_attention_mask = torch.ones(batch_size, peft_config.num_virtual_tokens).to(attention_mask.device)
+                attention_mask = torch.cat((prefix_attention_mask, attention_mask), dim=1)
+            # Compute the right position ids from the attention_mask
+            # Otherwise, position_ids=None will lead by default to position_ids by `arange()`
+            # When left padding is used (e.g. as with auto-regressive models), this will lead
+            # to the unwanted behavior of assigning positions to [PAD] tokens which "shifts"
+            # the initial position of all the padded samples in the batch.
+            position_ids = attention_mask.long().cumsum(-1) - 1
+            position_ids.masked_fill_(attention_mask == 0, 1)
+            kwargs["position_ids"] = position_ids
+        else:
             kwargs["position_ids"] = None
         if kwargs.get("token_type_ids", None) is not None:
             warnings.warn("Token type ids are not supported for parameter efficient tuning. Ignoring token type ids")
