@@ -25,6 +25,7 @@ from peft.utils import PeftType
 class PromptEncoderReparameterizationType(str, enum.Enum):
     MLP = "MLP"
     LSTM = "LSTM"
+    RESIDUAL = "RESIDUAL"
 
 
 @dataclass

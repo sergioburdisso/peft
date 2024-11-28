@@ -119,9 +119,21 @@ class PromptEncoder(torch.nn.Module):
                     torch.nn.Linear(self.hidden_size, self.output_size),
                 ]
                 self.mlp_head = torch.nn.Sequential(*layers)
-
+            elif self.encoder_type == PromptEncoderReparameterizationType.RESIDUAL:
+                encoder_num_layers_default = PromptEncoderConfig.encoder_num_layers
+                if config.encoder_num_layers != encoder_num_layers_default:
+                    warnings.warn(
+                        f"for {self.encoder_type.value}, the argument `encoder_num_layers` is ignored. "
+                        f"Exactly {encoder_num_layers_default} MLP layers are used."
+                    )
+                layers = [
+                    torch.nn.Linear(self.input_size, self.hidden_size),
+                    torch.nn.ReLU(),
+                    torch.nn.Linear(self.hidden_size, self.output_size)
+                ]
+                self.mlp_head = torch.nn.Sequential(*layers)
             else:
-                raise ValueError("Prompt encoder type not recognized. Please use one of MLP (recommended) or LSTM.")
+                raise ValueError("Prompt encoder type not recognized. Please use one of MLP (recommended), LSTM, or RESIDUAL.")
 
     def forward(self, indices):
         input_embeds = self.embedding(indices)
@@ -129,6 +141,9 @@ class PromptEncoder(torch.nn.Module):
             output_embeds = self.mlp_head(self.lstm_head(input_embeds)[0])
         elif self.encoder_type == PromptEncoderReparameterizationType.MLP:
             output_embeds = self.mlp_head(input_embeds)
+        elif self.encoder_type == PromptEncoderReparameterizationType.RESIDUAL:
+            output_embeds = self.mlp_head(input_embeds)
+            output_embeds += input_embeds
         else:
             raise ValueError("Prompt encoder type not recognized. Please use one of MLP (recommended) or LSTM.")
 
